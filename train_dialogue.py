@@ -80,15 +80,19 @@ IGNORE_INDEX = -100
 
 
 def construct_input(example, tokenizer, block_method="none", end_of_turn=False):
-    text = f"__CUSTOMER__ {example['first_utt']}"
-    text = tokenizer.encode(text, add_prefix_space=True)
-    mask_customer = [False] * len(text)
-    mask_agent = [False] * len(text)
+    # different input format -> commented out
+    # text = f"__CUSTOMER__ {example['first_utt']}"
+    # text = tokenizer.encode(text, add_prefix_space=True)
+    # mask_customer = [False] * len(text)
+    # mask_agent = [False] * len(text)
+    text = []
+    mask_customer = []
+    mask_agent = []
 
-    if end_of_turn and example["spkr"][0] == "agent":
-        text += tokenizer.encode("__END_OF_TURN__")
-        mask_agent += [mask_agent[-1]]
-        mask_customer += [mask_customer[-1]]
+    # if end_of_turn and example["spkr"][0] == "agent":
+    #     text += tokenizer.encode("__END_OF_TURN__")
+    #     mask_agent += [mask_agent[-1]]
+    #     mask_customer += [mask_customer[-1]]
 
     if block_method == "block-onehot":
         iccid_span = [-1, 0]
@@ -147,7 +151,7 @@ def construct_input(example, tokenizer, block_method="none", end_of_turn=False):
 
 class DialogueDataset(Dataset):
     def __init__(
-        self, tokenizer, file_path="train", split="train", block_size=512, block_method="none", end_of_turn=False,
+        self, tokenizer, file_path="train", split="train", block_size=512, block_method="none", end_of_turn=False
     ):
         assert os.path.isfile(file_path)
         assert split in {"train", "val", "debug"}
@@ -158,7 +162,7 @@ class DialogueDataset(Dataset):
         if block_method != "none":
             prefix += f"_{block_method}"
         cached_features_file = os.path.join(
-            directory, "cached_lm{}_{}_{}_{}".format(prefix, block_size, split, filename),
+            directory, "cached_lm{}_{}_{}_{}".format(prefix, block_size, split, filename)
         )
 
         if os.path.exists(cached_features_file) and split != "debug":
@@ -170,20 +174,21 @@ class DialogueDataset(Dataset):
 
             raw_data = torch.load(file_path)
             raw_data = list(raw_data.values())
-            n_train = int(0.8 * len(raw_data))
-            if split == "train":
-                raw_data = raw_data[:n_train]
-            elif split == "val":
-                raw_data = raw_data[n_train:]
-            elif split == "debug":
-                raw_data = raw_data[:20]
-            elif split == "all":
-                pass
-            else:
-                raise ValueError(f"split={split}")
+            # n_val = 5000
+            # n_train = len(raw_data) - n_val
+            # if split == "train":
+            #     raw_data = raw_data[:n_train]
+            # elif split == "val":
+            #     raw_data = raw_data[n_train:]
+            # elif split == "debug":
+            #     raw_data = raw_data[:20]
+            # elif split == "all":
+            #     pass
+            # else:
+            #     raise ValueError(f"split={split}")
 
             examples = [
-                construct_input(example, tokenizer, block_method=block_method, end_of_turn=end_of_turn,)
+                construct_input(example, tokenizer, block_method=block_method, end_of_turn=end_of_turn)
                 for example in tqdm(raw_data)
             ]
 
@@ -199,7 +204,7 @@ class DialogueDataset(Dataset):
                                 tmp[0] + [tokenizer.pad_token_id] * n_pad,
                                 tmp[1] + [False] * n_pad,
                                 tmp[2] + [False] * n_pad,
-                                torch.cat([tmp[3], tmp[3].new_zeros(n_pad, tmp[3].size(1))], dim=0,),
+                                torch.cat([tmp[3], tmp[3].new_zeros(n_pad, tmp[3].size(1))], dim=0),
                             )
                         else:
                             tmp = (
@@ -284,7 +289,7 @@ def train(args, train_dataset, model, tokenizer):
             "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
             "weight_decay": args.weight_decay,
         },
-        {"params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], "weight_decay": 0.0,},
+        {"params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], "weight_decay": 0.0},
     ]
     optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
     scheduler = get_linear_schedule_with_warmup(
@@ -304,7 +309,7 @@ def train(args, train_dataset, model, tokenizer):
     # Distributed training (should be after apex fp16 initialization)
     if args.local_rank != -1:
         model = torch.nn.parallel.DistributedDataParallel(
-            model, device_ids=[args.local_rank], output_device=args.local_rank, find_unused_parameters=True,
+            model, device_ids=[args.local_rank], output_device=args.local_rank, find_unused_parameters=True
         )
 
     # Train!
@@ -385,6 +390,16 @@ def train(args, train_dataset, model, tokenizer):
                     tb_writer.add_scalar("ppl", math.exp(log_loss), global_step)
                     logger.info(f"train step: {global_step} loss: {log_loss} ppl: {math.exp(log_loss)} lr: {lr}")
                     logging_loss = tr_loss
+                    # evaluate
+                    if (
+                        args.local_rank == -1 and args.evaluate_during_training
+                    ):  # Only evaluate when single GPU otherwise metrics may not average well
+                        results = evaluate(args, model, tokenizer)
+                        msg = ""
+                        for key, value in results.items():
+                            tb_writer.add_scalar("eval_{}".format(key), value, global_step)
+                            msg += f" {key}: {value}"
+                        logger.info(f"test step: {global_step}{msg}")
 
                 if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
                     # Save model checkpoint
@@ -397,16 +412,6 @@ def train(args, train_dataset, model, tokenizer):
                     model_to_save.save_pretrained(output_dir)
                     torch.save(args, os.path.join(output_dir, "training_args.bin"))
                     logger.info("Saving model checkpoint to %s", output_dir)
-                    # evaluate
-                    if (
-                        args.local_rank == -1 and args.evaluate_during_training
-                    ):  # Only evaluate when single GPU otherwise metrics may not average well
-                        results = evaluate(args, model, tokenizer)
-                        msg = ""
-                        for key, value in results.items():
-                            tb_writer.add_scalar("eval_{}".format(key), value, global_step)
-                            msg += f" {key}: {value}"
-                        logger.info(f"test step: {global_step}{msg}")
 
             if args.max_steps > 0 and global_step > args.max_steps:
                 epoch_iterator.close()
@@ -491,7 +496,7 @@ def main():
 
     ## Required parameters
     parser.add_argument(
-        "--train_data_file", default=None, type=str, required=True, help="The input training data file (a text file).",
+        "--train_data_file", default=None, type=str, required=True, help="The input training data file (a text file)."
     )
     parser.add_argument(
         "--output_dir",
@@ -509,9 +514,7 @@ def main():
         help="An optional input evaluation data file to evaluate the perplexity on (a text file).",
     )
 
-    parser.add_argument(
-        "--model_type", default="bert", type=str, help="The model architecture to be fine-tuned.",
-    )
+    parser.add_argument("--model_type", default="bert", type=str, help="The model architecture to be fine-tuned.")
     parser.add_argument(
         "--model_name_or_path",
         default="bert-base-cased",
@@ -520,10 +523,10 @@ def main():
     )
 
     parser.add_argument(
-        "--mlm", action="store_true", help="Train with masked-language modeling loss instead of language modeling.",
+        "--mlm", action="store_true", help="Train with masked-language modeling loss instead of language modeling."
     )
     parser.add_argument(
-        "--mlm_probability", type=float, default=0.15, help="Ratio of tokens to mask for masked language modeling loss",
+        "--mlm_probability", type=float, default=0.15, help="Ratio of tokens to mask for masked language modeling loss"
     )
 
     parser.add_argument(
@@ -555,32 +558,24 @@ def main():
     parser.add_argument("--do_train", action="store_true", help="Whether to run training.")
     parser.add_argument("--do_eval", action="store_true", help="Whether to run eval on the dev set.")
     parser.add_argument(
-        "--evaluate_during_training", action="store_true", help="Run evaluation during training at each logging step.",
+        "--evaluate_during_training", action="store_true", help="Run evaluation during training at each logging step."
     )
-    parser.add_argument(
-        "--do_lower_case", action="store_true", help="Set this flag if you are using an uncased model.",
-    )
+    parser.add_argument("--do_lower_case", action="store_true", help="Set this flag if you are using an uncased model.")
 
-    parser.add_argument(
-        "--per_gpu_train_batch_size", default=4, type=int, help="Batch size per GPU/CPU for training.",
-    )
-    parser.add_argument(
-        "--per_gpu_eval_batch_size", default=4, type=int, help="Batch size per GPU/CPU for evaluation.",
-    )
+    parser.add_argument("--per_gpu_train_batch_size", default=4, type=int, help="Batch size per GPU/CPU for training.")
+    parser.add_argument("--per_gpu_eval_batch_size", default=4, type=int, help="Batch size per GPU/CPU for evaluation.")
     parser.add_argument(
         "--gradient_accumulation_steps",
         type=int,
         default=1,
         help="Number of updates steps to accumulate before performing a backward/update pass.",
     )
-    parser.add_argument(
-        "--learning_rate", default=5e-5, type=float, help="The initial learning rate for Adam.",
-    )
+    parser.add_argument("--learning_rate", default=5e-5, type=float, help="The initial learning rate for Adam.")
     parser.add_argument("--weight_decay", default=0.0, type=float, help="Weight deay if we apply some.")
     parser.add_argument("--adam_epsilon", default=1e-8, type=float, help="Epsilon for Adam optimizer.")
     parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
     parser.add_argument(
-        "--num_train_epochs", default=1.0, type=float, help="Total number of training epochs to perform.",
+        "--num_train_epochs", default=1.0, type=float, help="Total number of training epochs to perform."
     )
     parser.add_argument(
         "--max_steps",
@@ -591,9 +586,7 @@ def main():
     parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps.")
 
     parser.add_argument("--logging_steps", type=int, default=50, help="Log every X updates steps.")
-    parser.add_argument(
-        "--save_steps", type=int, default=50, help="Save checkpoint every X updates steps.",
-    )
+    parser.add_argument("--save_steps", type=int, default=50, help="Save checkpoint every X updates steps.")
     parser.add_argument(
         "--eval_all_checkpoints",
         action="store_true",
@@ -601,10 +594,10 @@ def main():
     )
     parser.add_argument("--no_cuda", action="store_true", help="Avoid using CUDA when available")
     parser.add_argument(
-        "--overwrite_output_dir", action="store_true", help="Overwrite the content of the output directory",
+        "--overwrite_output_dir", action="store_true", help="Overwrite the content of the output directory"
     )
     parser.add_argument(
-        "--overwrite_cache", action="store_true", help="Overwrite the cached training and evaluation sets",
+        "--overwrite_cache", action="store_true", help="Overwrite the cached training and evaluation sets"
     )
     parser.add_argument("--seed", type=int, default=42, help="random seed for initialization")
 
@@ -620,17 +613,13 @@ def main():
         help="For fp16: Apex AMP optimization level selected in ['O0', 'O1', 'O2', and 'O3']."
         "See details at https://nvidia.github.io/apex/amp.html",
     )
-    parser.add_argument(
-        "--local_rank", type=int, default=-1, help="For distributed training: local_rank",
-    )
+    parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
     parser.add_argument("--server_ip", type=str, default="", help="For distant debugging.")
     parser.add_argument("--server_port", type=str, default="", help="For distant debugging.")
     parser.add_argument(
-        "--train_task", type=str, default="customer", choices=["all", "agent", "customer", "agent+customer"],
+        "--train_task", type=str, default="customer", choices=["all", "agent", "customer", "agent+customer"]
     )
-    parser.add_argument(
-        "--eval_task", type=str, default=None, choices=["all", "agent", "customer", "agent+customer"],
-    )
+    parser.add_argument("--eval_task", type=str, default=None, choices=["all", "agent", "customer", "agent+customer"])
     parser.add_argument(
         "--block_method",
         type=str,
@@ -718,7 +707,7 @@ def main():
     config_class, model_class, tokenizer_class = MODEL_CLASSES[args.model_type]
     config = config_class.from_pretrained(args.config_name if args.config_name else args.model_name_or_path)
     tokenizer = tokenizer_class.from_pretrained(
-        args.tokenizer_name if args.tokenizer_name else args.model_name_or_path, do_lower_case=args.do_lower_case,
+        args.tokenizer_name if args.tokenizer_name else args.model_name_or_path, do_lower_case=args.do_lower_case
     )
     if args.block_size <= 0:
         args.block_size = (
@@ -726,7 +715,7 @@ def main():
         )  # Our input block size will be the max possible for the model
     args.block_size = min(args.block_size, tokenizer.max_len_single_sentence)
     model = model_class.from_pretrained(
-        args.model_name_or_path, from_tf=bool(".ckpt" in args.model_name_or_path), config=config,
+        args.model_name_or_path, from_tf=bool(".ckpt" in args.model_name_or_path), config=config
     )
 
     # add new tokens
@@ -737,6 +726,7 @@ def main():
         "__MEID_NUM__",
         "__PHONE_NUM__",
         "__PIN_NUM__",
+        "<delayed>",
     ]
     if args.block_method == "block-tag":
         additional_tokens += [
@@ -757,6 +747,7 @@ def main():
         torch.distributed.barrier()  # End of barrier to make sure only the first process in distributed training download model & vocab
 
     logger.info("Training/evaluation parameters %s", args)
+    logging.getLogger("transformers.tokenization_utils").setLevel(logging.ERROR)
 
     # Training
     if args.do_train:

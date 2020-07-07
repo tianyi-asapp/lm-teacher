@@ -11,7 +11,16 @@ class GPT2ModelOneHotTag(GPT2Model):
         self.ote = nn.Linear(num_tags, self.config.n_embd)
         self._init_weights(self.ote)
 
-    def forward(self, input_ids, past=None, attention_mask=None, token_type_ids=None, position_ids=None, head_mask=None, tag_vecs=None):
+    def forward(
+        self,
+        input_ids,
+        past=None,
+        attention_mask=None,
+        token_type_ids=None,
+        position_ids=None,
+        head_mask=None,
+        tag_vecs=None,
+    ):
         input_shape = input_ids.size()
         input_ids = input_ids.view(-1, input_shape[-1])
         if token_type_ids is not None:
@@ -25,7 +34,9 @@ class GPT2ModelOneHotTag(GPT2Model):
         else:
             past_length = past[0][0].size(-2)
         if position_ids is None:
-            position_ids = torch.arange(past_length, input_ids.size(-1) + past_length, dtype=torch.long, device=input_ids.device)
+            position_ids = torch.arange(
+                past_length, input_ids.size(-1) + past_length, dtype=torch.long, device=input_ids.device
+            )
             position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
 
         # Attention mask.
@@ -43,7 +54,7 @@ class GPT2ModelOneHotTag(GPT2Model):
             # positions we want to attend and -10000.0 for masked positions.
             # Since we are adding it to the raw scores before the softmax, this is
             # effectively the same as removing these entirely.
-            attention_mask = attention_mask.to(dtype=next(self.parameters()).dtype) # fp16 compatibility
+            attention_mask = attention_mask.to(dtype=next(self.parameters()).dtype)  # fp16 compatibility
             attention_mask = (1.0 - attention_mask) * -10000.0
 
         # Prepare head mask if needed
@@ -55,8 +66,12 @@ class GPT2ModelOneHotTag(GPT2Model):
                 head_mask = head_mask.unsqueeze(0).unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
                 head_mask = head_mask.expand(self.config.n_layer, -1, -1, -1, -1)
             elif head_mask.dim() == 2:
-                head_mask = head_mask.unsqueeze(1).unsqueeze(-1).unsqueeze(-1)  # We can specify head_mask for each layer
-            head_mask = head_mask.to(dtype=next(self.parameters()).dtype) # switch to fload if need + fp16 compatibility
+                head_mask = (
+                    head_mask.unsqueeze(1).unsqueeze(-1).unsqueeze(-1)
+                )  # We can specify head_mask for each layer
+            head_mask = head_mask.to(
+                dtype=next(self.parameters()).dtype
+            )  # switch to fload if need + fp16 compatibility
         else:
             head_mask = [None] * self.config.n_layer
 
@@ -82,10 +97,7 @@ class GPT2ModelOneHotTag(GPT2Model):
             if self.output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states.view(*output_shape),)
 
-            outputs = block(hidden_states,
-                            layer_past=layer_past,
-                            attention_mask=attention_mask,
-                            head_mask=head_mask[i])
+            outputs = block(hidden_states, layer_past=layer_past, attention_mask=attention_mask, head_mask=head_mask[i])
 
             hidden_states, present = outputs[:2]
             presents = presents + (present,)
@@ -110,6 +122,7 @@ class GPT2ModelOneHotTag(GPT2Model):
             outputs = outputs + (all_attentions,)
         return outputs  # last hidden state, presents, (all hidden_states), (attentions)
 
+
 class GPT2LMHeadModelOneHotTag(GPT2LMHeadModel):
     def __init__(self, config):
         super(GPT2LMHeadModel, self).__init__(config)
@@ -122,15 +135,26 @@ class GPT2LMHeadModelOneHotTag(GPT2LMHeadModel):
     def set_tag_embedding(self, num_tags=0):
         self.transformer.set_tag_embedding(num_tags)
 
-    def forward(self, input_ids, past=None, attention_mask=None, token_type_ids=None, position_ids=None, head_mask=None,
-                labels=None, tag_vecs=None):
-        transformer_outputs = self.transformer(input_ids,
-                                               past=past,
-                                               attention_mask=attention_mask,
-                                               token_type_ids=token_type_ids,
-                                               position_ids=position_ids,
-                                               head_mask=head_mask,
-                                               tag_vecs=tag_vecs)
+    def forward(
+        self,
+        input_ids,
+        past=None,
+        attention_mask=None,
+        token_type_ids=None,
+        position_ids=None,
+        head_mask=None,
+        labels=None,
+        tag_vecs=None,
+    ):
+        transformer_outputs = self.transformer(
+            input_ids,
+            past=past,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            tag_vecs=tag_vecs,
+        )
         hidden_states = transformer_outputs[0]
 
         lm_logits = self.lm_head(hidden_states)
@@ -142,8 +166,7 @@ class GPT2LMHeadModelOneHotTag(GPT2LMHeadModel):
             shift_labels = labels[..., 1:].contiguous()
             # Flatten the tokens
             loss_fct = CrossEntropyLoss(ignore_index=-1)
-            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)),
-                            shift_labels.view(-1))
+            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
             outputs = (loss,) + outputs
 
         return outputs  # (loss), lm_logits, presents, (all hidden_states), (attentions)
