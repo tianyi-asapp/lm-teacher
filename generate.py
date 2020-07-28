@@ -3,30 +3,33 @@ import torch
 from tqdm import trange
 import logging
 import argparse
+import os
 
 logging.getLogger("transformers.tokenization_utils").setLevel(logging.ERROR)
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--model_path", type=str, default="./save/gpt2-1024--v3-s1")
-parser.add_argument("--data_path", type=str, default="./data/validation_small_set")
+parser.add_argument("--model_path", type=str, default="../sales_save/v2/gpt2-1024--v2-s1-medium")
+parser.add_argument("--data_path", type=str, default="./sales_data/val_data_v2_context_ref_pair.pkl")
+parser.add_argument("--output_dir", type=str, default="./sales_out")
 parser.add_argument("--p", type=float)
 parser.add_argument("--ngram_block", type=int, default=0)
 args = parser.parse_args()
 
 
-model = GPT2LMHeadModel.from_pretrained("gpt2")
 tokenizer = GPT2Tokenizer.from_pretrained(args.model_path, pad_token="__PAD__")
-model.resize_token_embeddings(len(tokenizer))
-model = model.from_pretrained(args.model_path)
+model = GPT2LMHeadModel.from_pretrained(args.model_path)
 model.cuda()
 # IMPORTANT: Note that setting the <PAD> token like this itn the constructor gives the
 # pad_token the pad_token_id = 50256, which normally belongs to <BOS> token_ids in GPT2
 # This is a very ugly way that works at the moment of setting the pad_token_id to the <BOS> token that is already included in the vocab size. This will be updated in the coming weeks! # noqa: E501
 
-# prompt_text = ["in this paper we", "we are trying to", "The purpose of this workshop is to check whether we can"]
-with open(f"{args.data_path}/prompt.txt", "r") as f:
-    prompt_text = f.readlines()
-    prompt_text = [t.strip() for t in prompt_text]
+context_ref_pairs = torch.load(args.data_path)
+
+prompt_text = []
+reference_text = []
+for pair in context_ref_pairs[:10]:
+    prompt_text.append(" ".join(pair[0]))
+    reference_text.append(pair[1].strip())
 
 
 def generate_batch(prompt_batch, num_tokens_to_produce=50):
@@ -81,7 +84,7 @@ def generate_batch(prompt_batch, num_tokens_to_produce=50):
         ],
     )
 
-    return output_sequences[:, input_ids.size(1) - 1 :]
+    return output_sequences[:, input_ids.size(1) :]
 
 
 batch_size = 1
@@ -91,19 +94,30 @@ for batch_start in trange(0, len(prompt_text), batch_size):
     for i in range(generated_output.size(0)):
         generated_outputs.append(generated_output[i])
 
-with open(f"{args.data_path}/reference.txt", "r") as f:
-    reference_text = f.readlines()
-    reference_text = [t.strip() for t in reference_text]
-
+os.makedirs(args.output_dir, exist_ok=True)
+output_path = f"{args.output_dir}/hypothesis_p{args.p}_ngramblock{args.ngram_block}.txt"
 generated_text = []
-with open(f"{args.data_path}/hypothesis_p{args.p}_ngramblock{args.ngram_block}.txt", "w") as f:
+with open(output_path, "w") as f:
     for i in range(len(generated_outputs)):
-        text = tokenizer.decode(generated_outputs[i], skip_special_tokens=True)
+        text = tokenizer.decode(generated_outputs[i], skip_special_tokens=False)
         f.write(text + "\n")
         generated_text.append(text)
 
 for i in range(len(prompt_text)):
-    print(f"C: {prompt_text[i]}")
-    print(f"R: {reference_text[i]}")
-    print(f"H: {generated_text[i]}")
+    print(f"History: {prompt_text[i]}")
+    print(f"Real Customer: {reference_text[i]}")
+    print(f"Generated Customer: {generated_text[i]}")
     print("=" * 120)
+
+with open(f"{args.output_dir}/hypothesis_p{args.p}_ngramblock{args.ngram_block}.html", "w") as f:
+    for pair, gen in zip(context_ref_pairs, generated_text):
+        for i in range(0, len(pair[0]) - 1, 2):
+            if pair[0][i] == "__CUSTOMER__":
+                tag = '<p style="color:blue">'
+            else:
+                tag = '<p style="color:red">'
+            f.write(f"{tag} {pair[0][i]} {pair[0][i + 1]} <p>")
+            f.write("\n")
+        f.write(f'<p style="color:green"> Bot: {gen} <p>')
+        f.write(f'<p style="color:DarkOrange"> Gold: {pair[1]} <p>\n')
+        f.write("<br> <br>")
