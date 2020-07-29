@@ -27,7 +27,7 @@ context_ref_pairs = torch.load(args.data_path)
 
 prompt_text = []
 reference_text = []
-for pair in context_ref_pairs[:10]:
+for pair in context_ref_pairs[:5000]:
     prompt_text.append(" ".join(pair[0]))
     reference_text.append(pair[1].strip())
 
