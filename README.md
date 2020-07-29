@@ -1,6 +1,6 @@
 # Sales Simulator
 
-This repo contains the code to finetunes a GPT-2 model on ASAPP sales dialogue data.
+This repo contains the code to finetune a GPT-2 model on ASAPP sales dialogue data.
 
 ## Data
 
